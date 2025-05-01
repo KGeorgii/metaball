@@ -1,0 +1,695 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Image Dot Pattern Generator</title>
+  <link rel="stylesheet" href="main.css">
+</head>
+<body>
+  <h1>Image Dot Pattern Generator</h1>
+  
+  <div class="container">
+    <div class="upload-section">
+      <input type="file" id="imageInput" accept="image/*">
+      <label for="imageInput" class="upload-btn">Choose an Image</label>
+      <div id="placeholder">No image selected</div>
+    </div>
+    
+    <div class="controls">
+      <div class="control-group">
+        <label for="patternType">Pattern Type</label>
+        <select id="patternType">
+          <option value="circles">Circles</option>
+          <option value="metaballs">Metaballs</option>
+          <option value="connectedDots">Connected Dots</option>
+          <option value="crossStitch">Cross-Stitch</option>
+          <option value="halftone">Halftone Dots</option>
+        </select>
+      </div>
+      <div class="control-group">
+        <label for="dotSize">Dot Size</label>
+        <input type="range" id="dotSize" min="1" max="30" value="8">
+      </div>
+      <div class="control-group">
+        <label for="spacing">Spacing</label>
+        <input type="range" id="spacing" min="1" max="20" value="4">
+      </div>
+      <div class="control-group">
+        <label for="threshold">Threshold</label>
+        <input type="range" id="threshold" min="0" max="255" value="128">
+      </div>
+
+      <div class="control-group">
+        <label for="handleRate">Handle Length Rate</label>
+        <input type="range" id="handleRate" min="0.5" max="5" step="0.1" value="2.4">
+        <span id="handleRateValue">2.4</span>
+      </div>
+      <div class="control-group">
+        <label for="metaballThreshold">Max Distance</label>
+        <input type="range" id="metaballThreshold" min="1" max="500" value="150">
+        <span id="metaballThresholdValue">150</span>
+      </div>
+      
+      <div class="control-group">
+        <label for="maxConnections">Max Connections</label>
+        <input type="range" id="maxConnections" min="1" max="8" value="3">
+        <span id="maxConnectionsValue">3</span>
+      </div>
+      
+      <div class="control-group">
+        <label for="noiseFactor">Texture (Noise)</label>
+        <input type="range" id="noiseFactor" min="0" max="100" value="0">
+        <span id="noiseFactorValue">0%</span>
+      </div>
+      <div class="control-group">
+        <label for="dotColor">Dot Color</label>
+        <input type="color" id="dotColor" value="#000000">
+      </div>
+      <div class="control-group">
+        <label for="bgColor">Background Color</label>
+        <input type="color" id="bgColor" value="#e6e6e6">
+      </div>
+    </div>
+    
+    <div class="preview-section">
+      <div class="preview-container">
+        <div class="preview-title">Original Image</div>
+        <canvas id="originalCanvas"></canvas>
+      </div>
+      <div class="preview-container">
+        <div class="preview-title">Dot Pattern</div>
+        <canvas id="processedCanvas"></canvas>
+        <button id="downloadBtn" class="download-btn">Download Pattern</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  // DOM refs
+  const imageInput       = document.getElementById('imageInput');
+  const originalCanvas   = document.getElementById('originalCanvas');
+  const processedCanvas  = document.getElementById('processedCanvas');
+  const patternType      = document.getElementById('patternType');
+  const dotSize          = document.getElementById('dotSize');
+  const spacing          = document.getElementById('spacing');
+  const threshold        = document.getElementById('threshold');
+  const handleRate       = document.getElementById('handleRate');
+  const handleRateValue  = document.getElementById('handleRateValue');
+  const metaballThreshold= document.getElementById('metaballThreshold');
+  const metaballThresholdValue = document.getElementById('metaballThresholdValue');
+  const maxConnections   = document.getElementById('maxConnections');
+  const maxConnectionsValue = document.getElementById('maxConnectionsValue');
+  const noiseFactor      = document.getElementById('noiseFactor');
+  const noiseFactorValue = document.getElementById('noiseFactorValue');
+  const dotColor         = document.getElementById('dotColor');
+  const bgColor          = document.getElementById('bgColor');
+  const downloadBtn      = document.getElementById('downloadBtn');
+  const placeholder      = document.getElementById('placeholder');
+
+  const originalCtx  = originalCanvas.getContext('2d');
+  const processedCtx = processedCanvas.getContext('2d');
+  let originalImage  = null;
+
+  // Update display values
+  handleRate.addEventListener('input', () => handleRateValue.textContent = handleRate.value);
+  metaballThreshold.addEventListener('input', () => metaballThresholdValue.textContent = metaballThreshold.value);
+  maxConnections.addEventListener('input', () => maxConnectionsValue.textContent = maxConnections.value);
+  noiseFactor.addEventListener('input', () => noiseFactorValue.textContent = `${noiseFactor.value}%`);
+
+  // Image upload
+  imageInput.addEventListener('change', e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      const img = new Image();
+      img.onload = () => {
+        originalImage = img;
+        placeholder.style.display = 'none';
+        setupCanvases(img);
+        processImage();
+      };
+      img.src = ev.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+
+  // Control listeners
+  [patternType, dotSize, spacing, threshold, handleRate, 
+   metaballThreshold, maxConnections, noiseFactor, dotColor, bgColor]
+    .forEach(el => el.addEventListener('input', processImage));
+
+  downloadBtn.addEventListener('click', () => {
+    const link = document.createElement('a');
+    link.download = 'dot-pattern.png';
+    link.href = processedCanvas.toDataURL('image/png');
+    link.click();
+  });
+
+  function setupCanvases(img) {
+    const aspect = img.width / img.height;
+    const maxW   = 800;
+    const w      = Math.min(img.width, maxW);
+    const h      = w / aspect;
+    [originalCanvas, processedCanvas].forEach(c => {
+      c.width  = w;
+      c.height = h;
+    });
+    originalCtx.drawImage(img, 0, 0, w, h);
+  }
+
+  function processImage() {
+    if (!originalImage) return;
+    const w = processedCanvas.width, h = processedCanvas.height;
+    // background
+    processedCtx.fillStyle = bgColor.value;
+    processedCtx.fillRect(0, 0, w, h);
+    // image data
+    const imageData = originalCtx.getImageData(0, 0, w, h).data;
+    // params
+    const ds = +dotSize.value,
+          sp = +spacing.value,
+          thr = +threshold.value,
+          hr  = +handleRate.value,
+          mt  = +metaballThreshold.value,
+          mc  = +maxConnections.value,
+          nf  = +noiseFactor.value / 100,
+          col = hexToRgb(dotColor.value);
+
+    switch(patternType.value) {
+      case 'circles':
+        drawCirclePattern(imageData, w, h, ds, sp, thr, col, nf);
+        break;
+      case 'connectedDots':
+        drawConnectedDotsPattern(imageData, w, h, ds, sp, thr, col, nf);
+        break;
+      case 'crossStitch':
+        drawCrossStitchPattern(imageData, w, h, ds, sp, thr, col, nf);
+        break;
+      case 'halftone':
+        drawHalftonePattern(imageData, w, h, ds, sp, thr, col, nf);
+        break;
+      case 'metaballs':
+        drawMetaballPattern(imageData, w, h, ds, sp, thr, mt, hr, mc, col, nf);
+        break;
+    }
+  }
+
+  // Vector helper
+  function getVector(angleRad, len) {
+    return { x: Math.cos(angleRad)*len, y: Math.sin(angleRad)*len };
+  }
+
+  // Improved metaball function
+  function metaball(d1, d2Circle, v, handleLenRate, maxDist) {
+    const c1 = {x: d1.x, y: d1.y}, c2 = {x: d2Circle.x, y: d2Circle.y};
+    const r1 = d1.radius, r2 = d2Circle.radius;
+    const dist = Math.hypot(c2.x-c1.x, c2.y-c1.y);
+    
+    // Don't connect if too far or one is completely inside the other
+    if (dist > maxDist || dist <= Math.abs(r1-r2)) {
+      return null;
+    }
+    
+    let u1, u2;
+    if (dist < r1 + r2) { // Overlapping circles
+      u1 = Math.acos((r1*r1 + dist*dist - r2*r2)/(2*r1*dist));
+      u2 = Math.acos((r2*r2 + dist*dist - r1*r1)/(2*r2*dist));
+    } else {
+      u1 = u2 = 0;
+    }
+    
+    // Find angle between circles
+    const angBetween = Math.atan2(c2.y-c1.y, c2.x-c1.x);
+    const angDiff = Math.acos((r1-r2)/dist);
+    
+    // Calculate attachment points
+    const a1a = angBetween + u1 + (angDiff - u1)*v;
+    const a1b = angBetween - u1 - (angDiff - u1)*v;
+    const a2a = angBetween + Math.PI - u2 - (Math.PI - u2 - angDiff)*v;
+    const a2b = angBetween - Math.PI + u2 + (Math.PI - u2 - angDiff)*v;
+    
+    const p1a = { x: c1.x + Math.cos(a1a)*r1, y: c1.y + Math.sin(a1a)*r1 };
+    const p1b = { x: c1.x + Math.cos(a1b)*r1, y: c1.y + Math.sin(a1b)*r1 };
+    const p2a = { x: c2.x + Math.cos(a2a)*r2, y: c2.y + Math.sin(a2a)*r2 };
+    const p2b = { x: c2.x + Math.cos(a2b)*r2, y: c2.y + Math.sin(a2b)*r2 };
+    
+    // Calculate handle lengths for bezier curves
+    const totalR = r1 + r2;
+    let hrate = Math.min(v*handleLenRate, Math.hypot(p1a.x-p2a.x, p1a.y-p2a.y)/totalR);
+    
+    // Adjust handle length when circles are overlapping
+    if (dist < r1+r2) {
+      hrate *= Math.min(1, dist*2/totalR);
+    }
+    
+    const h1 = r1 * hrate;
+    const h2 = r2 * hrate;
+    
+    return { p1a, p1b, p2a, p2b, h1, h2, a1a, a1b, a2a, a2b };
+  }
+
+  // Improved metaball pattern function
+  function drawMetaballPattern(data, width, height, dotSize, spacing, threshold,
+                              maxDistance, handleLenRate, maxConnections, color, noiseFactor) {
+    const step = dotSize + spacing;
+    const dots = [];
+    
+    // Sample image → create dots where image is dark
+    for (let y = 0; y < height; y += step) {
+      for (let x = 0; x < width; x += step) {
+        const b = getAverageBrightness(data, x, y, dotSize, width, height);
+        
+        if (b < threshold) {
+          // Calculate dot strength based on darkness
+          const str = (255 - b) / 255;
+          // Create a reasonable radius based on darkness
+          const radius = Math.max(dotSize * 0.4, str * dotSize * 0.8);
+          
+          // Add some subtle randomness to positions for more organic look
+          const jitterX = noiseFactor > 0 ? (Math.random() - 0.5) * noiseFactor * 0.8 : 0;
+          const jitterY = noiseFactor > 0 ? (Math.random() - 0.5) * noiseFactor * 0.8 : 0;
+          
+          dots.push({ 
+            x: x + step/2 + jitterX, 
+            y: y + step/2 + jitterY,
+            radius: radius
+          });
+        }
+      }
+    }
+    
+    // Draw base dots
+    processedCtx.fillStyle = `rgb(${color.r},${color.g},${color.b})`;
+    dots.forEach(d => {
+      processedCtx.beginPath();
+      processedCtx.arc(d.x, d.y, d.radius, 0, Math.PI*2);
+      processedCtx.fill();
+    });
+    
+    // Create proximity grid for faster neighbor finding
+    const gridSize = maxDistance;
+    const gridCells = {};
+    
+    // Place dots in grid cells
+    dots.forEach((dot, index) => {
+      const cellX = Math.floor(dot.x / gridSize);
+      const cellY = Math.floor(dot.y / gridSize);
+      const cellKey = `${cellX},${cellY}`;
+      
+      if (!gridCells[cellKey]) gridCells[cellKey] = [];
+      gridCells[cellKey].push(index);
+    });
+    
+    // Function to find nearby dots
+    function getNearbyDots(dot, index) {
+      const nearbyIndices = new Set();
+      const cellX = Math.floor(dot.x / gridSize);
+      const cellY = Math.floor(dot.y / gridSize);
+      
+      // Check surrounding cells
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dy = -1; dy <= 1; dy++) {
+          const checkKey = `${cellX + dx},${cellY + dy}`;
+          if (gridCells[checkKey]) {
+            gridCells[checkKey].forEach(idx => {
+              if (idx !== index) {
+                const otherDot = dots[idx];
+                const dist = Math.hypot(dot.x - otherDot.x, dot.y - otherDot.y);
+                if (dist < maxDistance) {
+                  nearbyIndices.add(idx);
+                }
+              }
+            });
+          }
+        }
+      }
+      
+      return Array.from(nearbyIndices);
+    }
+    
+    // Create metaball connections
+    dots.forEach((dot, i) => {
+      const nearbyIndices = getNearbyDots(dot, i);
+      
+      // Sort by distance (closer first)
+      const sortedByDist = nearbyIndices
+        .map(idx => {
+          const otherDot = dots[idx];
+          const dist = Math.hypot(dot.x - otherDot.x, dot.y - otherDot.y);
+          return { idx, dist };
+        })
+        .sort((a, b) => a.dist - b.dist);
+      
+      // Connect to closest dots (limit by maxConnections)
+      sortedByDist.slice(0, maxConnections).forEach(({ idx }) => {
+        // Only connect if idx > i to avoid double connections
+        if (idx > i) {
+          const d2 = dots[idx];
+          
+          // Create metaball connection
+          const m = metaball(dot, d2, 0.5, handleLenRate, maxDistance);
+          if (m) {
+            processedCtx.beginPath();
+            processedCtx.moveTo(m.p1a.x, m.p1a.y);
+            
+            // p1a → p2a
+            const v1 = getVector(m.a1a - Math.PI/2, m.h1);
+            const v2 = getVector(m.a2a + Math.PI/2, m.h2);
+            processedCtx.bezierCurveTo(
+              m.p1a.x + v1.x, m.p1a.y + v1.y,
+              m.p2a.x + v2.x, m.p2a.y + v2.y,
+              m.p2a.x, m.p2a.y
+            );
+            
+            // line to p2b
+            processedCtx.lineTo(m.p2b.x, m.p2b.y);
+            
+            // p2b → p1b
+            const v3 = getVector(m.a2b - Math.PI/2, m.h2);
+            const v4 = getVector(m.a1b + Math.PI/2, m.h1);
+            processedCtx.bezierCurveTo(
+              m.p2b.x + v3.x, m.p2b.y + v3.y,
+              m.p1b.x + v4.x, m.p1b.y + v4.y,
+              m.p1b.x, m.p1b.y
+            );
+            
+            processedCtx.closePath();
+            processedCtx.fill();
+          }
+        }
+      });
+    });
+    
+    // Optional: Add noise texture overlay for more organic feel
+    if (noiseFactor > 0) {
+      const count = Math.floor(width * height * noiseFactor * 0.0003);
+      processedCtx.fillStyle = bgColor.value;
+      for (let i = 0; i < count; i++) {
+        processedCtx.fillRect(
+          Math.random() * width | 0,
+          Math.random() * height | 0,
+          1, 1
+        );
+      }
+    }
+  }
+
+  // Simple circle pattern
+  function drawCirclePattern(data, width, height, dotSize, spacing, threshold, color, noiseFactor) {
+    const step = dotSize + spacing;
+    
+    processedCtx.fillStyle = `rgb(${color.r},${color.g},${color.b})`;
+    
+    for (let y = 0; y < height; y += step) {
+      for (let x = 0; x < width; x += step) {
+        const b = getAverageBrightness(data, x, y, dotSize, width, height);
+        
+        if (b < threshold) {
+          const strength = (255 - b) / 255;
+          const radius = strength * dotSize / 2;
+          
+          // Add slight position jitter for organic feel
+          const jitterX = noiseFactor > 0 ? (Math.random() - 0.5) * noiseFactor : 0;
+          const jitterY = noiseFactor > 0 ? (Math.random() - 0.5) * noiseFactor : 0;
+          
+          processedCtx.beginPath();
+          processedCtx.arc(
+            x + step/2 + jitterX, 
+            y + step/2 + jitterY, 
+            radius, 0, Math.PI*2
+          );
+          processedCtx.fill();
+        }
+      }
+    }
+    
+    // Add noise if needed
+    if (noiseFactor > 0) {
+      const count = Math.floor(width * height * noiseFactor * 0.0005);
+      processedCtx.fillStyle = bgColor.value;
+      for (let i = 0; i < count; i++) {
+        processedCtx.fillRect(
+          Math.random()*width|0,
+          Math.random()*height|0,
+          1, 1
+        );
+      }
+    }
+  }
+  
+  // Connected dots pattern
+  function drawConnectedDotsPattern(data, width, height, dotSize, spacing, threshold, color, noiseFactor) {
+    const step = dotSize + spacing;
+    const dots = [];
+    
+    // Create dots
+    for (let y = 0; y < height; y += step) {
+      for (let x = 0; x < width; x += step) {
+        const b = getAverageBrightness(data, x, y, dotSize, width, height);
+        
+        if (b < threshold) {
+          const jitterX = noiseFactor > 0 ? (Math.random() - 0.5) * noiseFactor : 0;
+          const jitterY = noiseFactor > 0 ? (Math.random() - 0.5) * noiseFactor : 0;
+          
+          dots.push({
+            x: x + step/2 + jitterX,
+            y: y + step/2 + jitterY,
+            brightness: b
+          });
+        }
+      }
+    }
+    
+    // Draw connections
+    processedCtx.strokeStyle = `rgb(${color.r},${color.g},${color.b})`;
+    processedCtx.lineWidth = Math.max(1, dotSize / 4);
+    
+    // Connect to nearest neighbors
+    dots.forEach((dot, i) => {
+      // Find closest dots
+      const closest = dots
+        .map((d, idx) => {
+          if (idx === i) return { idx: -1, dist: Infinity };
+          const dist = Math.hypot(d.x - dot.x, d.y - dot.y);
+          return { idx, dist };
+        })
+        .filter(n => n.dist < step * 2.5) // Only connect nearby dots
+        .sort((a, b) => a.dist - b.dist)
+        .slice(0, 2); // Connect to 2 closest neighbors
+      
+      closest.forEach(({ idx }) => {
+        if (idx > i) { // Avoid double connections
+          const neighbor = dots[idx];
+          processedCtx.beginPath();
+          processedCtx.moveTo(dot.x, dot.y);
+          processedCtx.lineTo(neighbor.x, neighbor.y);
+          processedCtx.stroke();
+        }
+      });
+    });
+    
+    // Draw dots
+    processedCtx.fillStyle = `rgb(${color.r},${color.g},${color.b})`;
+    dots.forEach(dot => {
+      const strength = (255 - dot.brightness) / 255;
+      const radius = strength * dotSize / 2;
+      
+      processedCtx.beginPath();
+      processedCtx.arc(dot.x, dot.y, radius, 0, Math.PI*2);
+      processedCtx.fill();
+    });
+    
+    // Add noise texture
+    if (noiseFactor > 0) {
+      const count = Math.floor(width * height * noiseFactor * 0.0005);
+      processedCtx.fillStyle = bgColor.value;
+      for (let i = 0; i < count; i++) {
+        processedCtx.fillRect(
+          Math.random()*width|0,
+          Math.random()*height|0,
+          1, 1
+        );
+      }
+    }
+  }
+  
+  // Cross stitch pattern
+  function drawCrossStitchPattern(data, width, height, dotSize, spacing, threshold, color, noiseFactor) {
+    const step = dotSize + spacing;
+    const crossSize = Math.max(2, dotSize * 0.8);
+    
+    processedCtx.strokeStyle = `rgb(${color.r},${color.g},${color.b})`;
+    processedCtx.lineWidth = Math.max(1, crossSize / 4);
+    
+    for (let y = 0; y < height; y += step) {
+      for (let x = 0; x < width; x += step) {
+        const b = getAverageBrightness(data, x, y, dotSize, width, height);
+        
+        if (b < threshold) {
+          const centerX = x + step/2;
+          const centerY = y + step/2;
+          const jitterX = noiseFactor > 0 ? (Math.random() - 0.5) * noiseFactor : 0;
+          const jitterY = noiseFactor > 0 ? (Math.random() - 0.5) * noiseFactor : 0;
+          
+          // Draw X shape
+          processedCtx.beginPath();
+          processedCtx.moveTo(centerX - crossSize/2 + jitterX, centerY - crossSize/2 + jitterY);
+          processedCtx.lineTo(centerX + crossSize/2 + jitterX, centerY + crossSize/2 + jitterY);
+          processedCtx.stroke();
+          
+          processedCtx.beginPath();
+          processedCtx.moveTo(centerX + crossSize/2 + jitterX, centerY - crossSize/2 + jitterY);
+          processedCtx.lineTo(centerX - crossSize/2 + jitterX, centerY + crossSize/2 + jitterY);
+          processedCtx.stroke();
+        }
+      }
+    }
+
+    // Add noise texture
+    if (noiseFactor > 0) {
+      const count = Math.floor(width * height * noiseFactor * 0.0005);
+      processedCtx.fillStyle = bgColor.value;
+      for (let i = 0; i < count; i++) {
+        processedCtx.fillRect(
+          Math.random()*width|0,
+          Math.random()*height|0,
+          1, 1
+        );
+      }
+    }
+  }
+  
+  // Halftone dot pattern
+  function drawHalftonePattern(data, width, height, dotSize, spacing, threshold, color, noiseFactor) {
+    const step = dotSize + spacing;
+    
+    processedCtx.fillStyle = `rgb(${color.r},${color.g},${color.b})`;
+    
+    for (let y = 0; y < height; y += step) {
+      for (let x = 0; x < width; x += step) {
+        const b = getAverageBrightness(data, x, y, dotSize, width, height);
+        
+        if (b < 255) { // Draw all pixels with varying size based on brightness
+          const strength = 1 - b / 255; // Invert: darker in image = bigger dot
+          const radius = strength * (dotSize / 2);
+          
+          // Add slight jitter for organic feel
+          const jitterX = noiseFactor > 0 ? (Math.random() - 0.5) * noiseFactor : 0;
+          const jitterY = noiseFactor > 0 ? (Math.random() - 0.5) * noiseFactor : 0;
+          
+          if (radius > 0.5) { // Only draw visible dots
+            processedCtx.beginPath();
+            processedCtx.arc(
+              x + step/2 + jitterX,
+              y + step/2 + jitterY,
+              radius, 0, Math.PI*2
+            );
+            processedCtx.fill();
+          }
+        }
+      }
+    }
+    
+    // Add noise texture
+    if (noiseFactor > 0) {
+      const count = Math.floor(width * height * noiseFactor * 0.0005);
+      processedCtx.fillStyle = bgColor.value;
+      for (let i = 0; i < count; i++) {
+        processedCtx.fillRect(
+          Math.random()*width|0,
+          Math.random()*height|0,
+          1, 1
+        );
+      }
+    }
+  }
+
+  // Helper function to calculate average brightness in a region
+  function getAverageBrightness(data, x, y, size, width, height) {
+    const halfSize = size / 2;
+    let totalBrightness = 0;
+    let pixelCount = 0;
+    
+    // Sample area around point
+    const startX = Math.max(0, Math.floor(x - halfSize));
+    const startY = Math.max(0, Math.floor(y - halfSize));
+    const endX = Math.min(width - 1, Math.floor(x + halfSize));
+    const endY = Math.min(height - 1, Math.floor(y + halfSize));
+    
+    for (let sy = startY; sy <= endY; sy++) {
+      for (let sx = startX; sx <= endX; sx++) {
+        const i = (sy * width + sx) * 4;
+        // Average RGB to get brightness
+        const r = data[i];
+        const g = data[i + 1];
+        const b = data[i + 2];
+        // Simple brightness calculation
+        const brightness = 0.299 * r + 0.587 * g + 0.114 * b;
+        totalBrightness += brightness;
+        pixelCount++;
+      }
+    }
+    
+    return pixelCount > 0 ? totalBrightness / pixelCount : 255;
+  }
+
+  // Hex to RGB conversion
+  function hexToRgb(hex) {
+    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+    return result ? {
+      r: parseInt(result[1], 16),
+      g: parseInt(result[2], 16),
+      b: parseInt(result[3], 16)
+    } : { r: 0, g: 0, b: 0 };
+  }
+
+  // Initialize with default image if available
+  window.addEventListener('load', () => {
+    const defaultImg = new Image();
+    defaultImg.onload = () => {
+      originalImage = defaultImg;
+      placeholder.style.display = 'none';
+      setupCanvases(defaultImg);
+      processImage();
+    };
+    defaultImg.onerror = () => {
+      console.log('No default image available');
+    };
+    // Optional: set a default image path here
+    // defaultImg.src = 'default.jpg';
+  });
+
+  // Show/hide controls based on pattern type
+  patternType.addEventListener('change', () => {
+    // Show/hide specialized controls based on selected pattern
+    document.querySelectorAll('.control-group').forEach(group => {
+      // Reset visibility first
+      group.style.display = 'block';
+    });
+    
+    // Handle specific controls visibility
+    const type = patternType.value;
+    
+    // Handle Rate - only for metaballs
+    document.getElementById('handleRate').parentElement.style.display = 
+      type === 'metaballs' ? 'block' : 'none';
+    
+    // Metaball threshold - only for metaballs
+    document.getElementById('metaballThreshold').parentElement.style.display = 
+      type === 'metaballs' ? 'block' : 'none';
+    
+    // Max connections - only for connected dots and metaballs
+    document.getElementById('maxConnections').parentElement.style.display = 
+      (type === 'connectedDots' || type === 'metaballs') ? 'block' : 'none';
+  });
+
+  // Initial controls setup
+  window.addEventListener('DOMContentLoaded', () => {
+    // Hide specialized controls initially
+    document.getElementById('handleRate').parentElement.style.display = 'none';
+    document.getElementById('metaballThreshold').parentElement.style.display = 'none';
+    document.getElementById('maxConnections').parentElement.style.display = 'none';
+  });
+  </script>
